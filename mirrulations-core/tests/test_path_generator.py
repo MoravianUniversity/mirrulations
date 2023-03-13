@@ -282,3 +282,15 @@ def test_attachment_comment_paths(generator):
     json_pls = get_attachment_and_comment()
     expected_path = ["/FDA/FDA-2016-D-2335/binary-FDA-2016-D-2335/comments_attachments/FDA-2016-D-2335-1566_attachment_1.pdf"]
     assert expected_path == generator.get_attachment_json_paths(json_pls)
+
+def test_extractor_save_path():
+    path = "/data/data/USTR/USTR-2015-0010/" + \
+           "binary-USTR-2015-0010/" + \
+           "comments_attachments/USTR-2015-0010-0002_attachment_1.pdf"
+    save_path = PathGenerator.make_attachment_save_path(path)
+    expected_path = "/data/data/USTR/USTR-2015-0010/text-USTR-2015-0010/" + \
+                    "comments_extracted_text/pdfminer/" + \
+                    "USTR-2015-0010-0002_attachment_1_extracted.txt"
+    print(save_path)
+    print(expected_path)
+    assert save_path == expected_path

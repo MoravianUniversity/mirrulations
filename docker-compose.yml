@@ -71,6 +71,11 @@ services:
       rabbitmq:
         condition: service_healthy
     restart: always
+  extractor:
+    build:
+      context: .
+      dockerfile: mirrulations-extractor/Dockerfile
+    restart: always
   dashboard:
     build:
       context: .

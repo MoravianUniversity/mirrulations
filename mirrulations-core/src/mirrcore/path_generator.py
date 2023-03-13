@@ -127,7 +127,6 @@ class PathGenerator:
         agencyId, docket_id, item_id = self.get_attributes(json)
 
         return f'/{agencyId}/{docket_id}/text-{docket_id}/comments/{item_id}.json'
-
     
     def get_attachment_json_paths(self, json):
         '''
@@ -155,3 +154,24 @@ class PathGenerator:
                 print(f"fileFormats did not exist for attachment ID: {id}")
 
         return attachments
+    
+    @staticmethod
+    def make_attachment_save_path(path):
+        '''
+        This method takes a complete path to a pdf and makes
+        the save path based on paramters in that path.
+        Parameters
+        ----------
+        path : str
+            the complete file path for the attachment that is being extracted
+            ex. /path/to/pdf/attachment_1.pdf
+        '''
+        if "comments" in path:
+            return path.replace('binary', 'text') \
+            .replace('comments_attachments', 'comments_extracted_text/pdfminer') \
+            .replace('.pdf', '_extracted.txt') \
+        
+        return path.replace('binary', 'text') \
+            .replace('documents_attachments', 'documents_extracted_text/pdfminer') \
+            .replace('.pdf', '_extracted.txt') \
+            

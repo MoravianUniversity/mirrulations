@@ -223,6 +223,8 @@ class Client:
         Ensures data format matches what is expected for attachments
         If results are valid, writes them to disk
 
+        Implement pdf to text
+
         Parameters
         ----------
         data : dict
