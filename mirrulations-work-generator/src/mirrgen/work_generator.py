@@ -8,6 +8,7 @@ from mirrcore.regulations_api import RegulationsAPI
 from mirrcore.job_queue import JobQueue
 from mirrcore.data_storage import DataStorage
 from mirrcore.redis_check import is_redis_available
+from mirrcore.job_queue_exceptions import WorkGenException
 
 
 class WorkGenerator:
@@ -66,6 +67,9 @@ if __name__ == '__main__':
         print('End generate comment/attachment jobs')
 
     while True:
-        generate_work()
+        try:
+            generate_work()
+        except Exception as error:
+            raise WorkGenException from error
         # Sleeps for 6 hours
         time.sleep(60 * 60 * 6)

@@ -1,4 +1,5 @@
 from mirrcore.rabbitmq import RabbitMQ
+from mirrcore.job_queue_exceptions import JobQueueException
 
 
 class JobQueue:
@@ -30,7 +31,10 @@ class JobQueue:
             'reg_id': reg_id,
             'agency': agency
             }
-        self.rabbitmq.add(job)
+        try: 
+            self.rabbitmq.add(job)
+        except:
+            raise JobQueueException
         if job_type == 'attachments':
             self.database.incr('num_jobs_attachments_waiting')
         elif job_type == 'comments':
