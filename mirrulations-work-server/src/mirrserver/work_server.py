@@ -1,7 +1,6 @@
 from flask import Flask, json, jsonify, request
 import redis
 from mirrcore.data_storage import DataStorage
-from mirrcore.attachment_saver import AttachmentSaver
 from mirrcore.rabbitmq import RabbitMQ
 from mirrserver.put_results_validator import PutResultsValidator
 from mirrserver.exceptions import InvalidResultsException
@@ -25,8 +24,6 @@ class WorkServer:
         the redis server holding the jobs waiting queue and client ids
     data : DataStorage
         the data storage class that connects to mongo
-    attachment_saver : AttachmentSaver
-        the attachment saver class that saves attachments
     put_results_validator : PutResultsValidator
         the validator class for the put results endpoint
     get_job_validator : GetJobValidator
@@ -49,7 +46,6 @@ class WorkServer:
         self.app = Flask(__name__)
         self.redis = redis_server
         self.data = DataStorage()
-        self.attachment_saver = AttachmentSaver()
         self.put_results_validator = PutResultsValidator()
         self.get_job_validator = GetJobValidator()
         self.rabbitmq = RabbitMQ()

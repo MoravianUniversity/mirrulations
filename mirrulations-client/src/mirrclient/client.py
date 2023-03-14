@@ -2,11 +2,11 @@
 import time
 import os
 import sys
-from base64 import b64encode
 from json import dumps, loads
+from base64 import b64encode
 import requests
 from dotenv import load_dotenv
-from mirrcore.attachment_saver import AttachmentSaver
+from mirrcore.path_generator import PathGenerator
 
 
 class NoJobsAvailableException(Exception):
@@ -20,75 +20,6 @@ class NoJobsAvailableException(Exception):
 
     def __str__(self):
         return f'{self.message}'
-
-
-def get_urls_and_formats(file_info):
-    """
-    Parameters
-    ----------
-    file_info : dict
-        a json of file formats and urls
-
-    Returns
-    -------
-    two lists of urls and file formats
-    """
-    urls = []
-    formats = []
-
-    for link in file_info:
-        urls.append(link["fileUrl"])
-        formats.append(link["format"])
-
-    return urls, formats
-
-
-def get_key_path_string(results, key):
-    """
-    Creates path for keys in results
-
-    Parameters
-    ----------
-    results : dict
-        The results of a performed job
-
-    key : str
-        A key in the result
-    """
-    if key in results.keys():
-        if results[key] is None:
-            return 'None/'
-        return results[key] + "/"
-    return ""
-
-
-def get_output_path(results):
-    """
-    Takes results from a performed job and creates an output
-    path for a directory.
-
-    Parameters
-    ----------
-    results : dict
-        the results from a performed job
-
-    Returns
-    -------
-    str
-        the output path for the job
-    """
-    if 'error' in results:
-        return -1
-    output_path = ""
-    data = results["data"]["attributes"]
-    output_path += get_key_path_string(data, "agencyId")
-    output_path += get_key_path_string(data, "docketId")
-    output_path += get_key_path_string(data, "commentOnDocumentId")
-    output_path += results["data"]["id"] + "/"
-    output_path += results["data"]["id"] + ".json"
-    print(f'Job output path: {output_path}')
-
-    return output_path
 
 
 def is_environment_variables_present():
@@ -129,6 +60,7 @@ class Client:
     def __init__(self):
         self.api_key = os.getenv('API_KEY')
         self.client_id = os.getenv('ID')
+        self.path_generator = PathGenerator()
 
         hostname = os.getenv('WORK_SERVER_HOSTNAME')
         port = os.getenv('WORK_SERVER_PORT')
@@ -185,61 +117,24 @@ class Client:
             'agency': job['agency']
         }
         print(f'Sending Job {job["job_id"]} to Work Server')
-        # If the job is not an attachment job we need to add an output path
-        if ('errors' not in job_result) and (job['job_type'] != 'attachments'):
-            data['directory'] = get_output_path(job_result)
+        if 'errors' not in job_result:
+            data['directory'] = self.path_generator.get_path(job_result)
+
+        self._put_results(data)
         requests.put(f'{self.url}/put_results', json=dumps(data),
                      params={'client_id': self.client_id},
                      timeout=10)
-        self._handle_results(data)
+        comment_has_attachment = self.does_comment_have_attachment(job_result)
 
+        if data["job_type"] == "comments" and comment_has_attachment:
+            self.download_all_attachments_from_comment(data, job_result)
         # For now, still need to send original put request for Mongo
         # requests.put(
-        #     f'{self.url}/put_results',
+        #     f'{self.url}/_put_results',
         #     json=dumps(data['job_id']),
         #     params={'client_id': self.client_id},
         #     timeout=10
         # )
-
-    def _handle_results(self, data):
-        """
-        Verifies job results and deals with them appropriately.
-
-        Parameters
-        ----------
-        data : dict
-            the results from a performed job
-        """
-        if not data or not data.get('results'):
-            print(f'{data.get("job_id")}: No results found')
-            return
-        if data.get('job_type', '') == 'attachments':
-            self._put_attachment_results(data)
-        else:
-            self._put_results(data)
-
-    def _put_attachment_results(self, data):
-        """
-        Ensures data format matches what is expected for attachments
-        If results are valid, writes them to disk
-
-        Parameters
-        ----------
-        data : dict
-            the results from a performed job
-        """
-        print("Attachment Job Being Saved")
-        if any(x in data['results'] for x in ['error', 'errors']):
-            print(f"{data['job_id']}: Errors found in results")
-            return
-        print(f"agency: {data['agency']}")
-        print(f"reg_id: {data['reg_id']}")
-        AttachmentSaver().save(
-            data,
-            f"/data/{data['agency']}/{data['reg_id']}"
-        )
-        print(f"/data/{data['agency']}/{data['reg_id']}")
-        print(f"{data['job_id']}: Attachment result(s) written to disk")
 
     def _put_results(self, data):
         """
@@ -271,13 +166,24 @@ class Client:
             the results data to be written to disk
         """
         dir_, filename = data['directory'].rsplit('/', 1)
-        try:
-            os.makedirs(f'/data/{dir_}')
-        except FileExistsError:
-            print(f'Directory already exists in root: /data/{dir_}')
-        with open(f'/data/{dir_}/{filename}', 'w+', encoding='utf8') as file:
+        self.make_path(dir_)
+        with open(f'/data{dir_}/{filename}', 'w+', encoding='utf8') as file:
             print('Writing results to disk')
             file.write(dumps(data['results']))
+
+    def make_attachment_directory(self, filepath):
+        '''
+        Makes a path for a attachment if one does not already exist
+        '''
+        filepath_components = filepath.split("/")
+        filepath = "/".join(filepath_components[0:-1])
+        self.make_path(filepath)
+
+    def make_path(self, path):
+        try:
+            os.makedirs(f'/data{path}')
+        except FileExistsError:
+            print(f'Directory already exists in root: /data{path}')
 
     def perform_job(self, job_url):
         """
@@ -295,101 +201,73 @@ class Client:
             json results of the performed job
         """
         print('Performing job')
+        if "?" in job_url:
+            return requests.get(job_url + f'&api_key={self.api_key}',
+                                timeout=10).json()
         return requests.get(job_url + f'?api_key={self.api_key}',
                             timeout=10).json()
 
-    def perform_attachment_job(self, url, job_id):
+    def download_all_attachments_from_comment(self, data, comment_json):
+        '''
+        Downloads all attachments for a comment
+        '''
+        # list of paths for attachmennts
+
+        path_list = self.path_generator.get_attachment_json_paths(comment_json)
+        counter = 0
+        comment_id_str = f"Comment - {comment_json['data']['id']}"
+        print(f"Found {len(path_list)} attachment(s) for {comment_id_str}")
+        # We need an additional check for if "included" exists in the json
+        for included in comment_json["included"]:
+            attributes = included["attributes"]
+            if (attributes["fileFormats"] and
+                    attributes["fileFormats"] not in ["null", None]):
+                for attachment in included['attributes']['fileFormats']:
+                    url = attachment['fileUrl']
+                    self.download_single_attachment(url, path_list[counter],
+                                                    data)
+                    print(f"Downloaded {counter+1}/{len(path_list)} "
+                          f"attachment(s) for {comment_id_str}")
+                    counter += 1  # re write this
+
+    def download_single_attachment(self, url, path, data):
+        '''
+        Downloads a single attachment for a comment and
+        writes it to its correct path
+        '''
+        response = requests.get(url, timeout=10)
+        self.make_attachment_directory(path)
+        filename = path.split('/')[-1]
+        data[filename] = b64encode(response.content).decode('ascii')
+        print(f"Wrote attachment - {url} to path: " + path)
+        with open(f'/data{path}', "wb") as file:
+            file.write(response.content)
+            file.close()
+        data = {
+            'job_type': 'attachments',
+            'job_id': data['job_id'],
+            'results': filename,
+            'reg_id': data['reg_id'],
+            'agency': data['agency']
+        }
+        result = requests.put(f'{self.url}/put_results', json=dumps(data),
+                              params={'client_id': self.client_id},
+                              timeout=10)
+        print(result.status_code)
+
+    def does_comment_have_attachment(self, comment_json):
         """
-        Performs an attachment job via get_request function by giving
-        it the job_url combined with the Client api_key for validation.
-
-        The attachments are encoded and saved to a dictionary. The name is
-        created from the job_id and the file extension is the same as the
-        file type.
-
-        The files are encoded in order to send them to the workserver
-        as part of a json.
-
-        Parameters
-        ----------
-        url : str
-            url from a job
-
-        api_key : str
-            api_key for the client
-
-        job_id : str
-            id of the job
-
-        Returns
-        -------
-        a dict of encoded files
-        """
-        response_json = requests.get(
-            f"{url}?api_key={self.api_key}",
-            timeout=10
-        ).json()
-
-        if any(x in response_json for x in ('error', 'errors')):
-            return response_json
-
-        if not self.does_attachment_exists(response_json):
-            print(f"No attachments to download from {url}")
-            return {}
-
-        # Get Attachments
-        print(f"Performing attachment job {url}")
-        file_info = \
-            response_json["data"][0]["attributes"]["fileFormats"]
-        file_urls, file_types = get_urls_and_formats(file_info)
-        return self.download_attachments(file_urls, file_types, job_id)
-
-    def does_attachment_exists(self, attachment_json):
-        """
-        Validates whether a json for an attachment is valid to continue
-        download process. Invalid JSON means no attachment(s) available
+        Validates whether a json for a comment has any
+        attachments to be downloaded.
 
         RETURNS
         -------
-        True or False depending if there is an attachment available to download
+        True or False depending if there is an attachment
+        available to download from a comment
         """
-        # handle KeyError & IndexError
-        if not attachment_json.get('data', []):
-            return False
-        data = attachment_json['data'][0]
-
-        # Check if attributes and fileFormats exists
-        if not data.get('attributes', {}).get('fileFormats'):
-            return False
-
-        return True
-
-    def download_attachments(self, urls, file_types, job_id):
-        """
-        Downloads attachments from regulations.gov.
-
-        Parameters
-        ----------
-        urls : list of str
-            urls of attachments
-
-        file_types : list of str
-            file formats of attachments
-
-        job_id : str
-            id of the job
-
-        Returns
-        -------
-        a dict of encoded files
-        """
-        print('Downloading attachments')
-        attachments = {}
-        for i, (url, file_type) in enumerate(zip(urls, file_types)):
-            attachment = requests.get(url, timeout=10)
-            attachments[f'{job_id}_{i}.{file_type}'] = b64encode(
-                attachment.content).decode('ascii')
-        return attachments
+        if "included" in comment_json and len(comment_json["included"]) > 0:
+            return True
+        return False
 
     def job_operation(self):
         """
@@ -400,10 +278,7 @@ class Client:
         """
         print('Processing job from work server')
         job = self.get_job()
-        if job['job_type'] == 'attachments':
-            result = self.perform_attachment_job(job['url'], job['job_id'])
-        else:
-            result = self.perform_job(job['url'])
+        result = self.perform_job(job['url'])
         self.send_job(job, result)
         if any(x in result for x in ('error', 'errors')):
             print(f'FAILURE: Error in {job["url"]}')
